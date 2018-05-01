@@ -8,6 +8,7 @@
 # Check IF cmake has the required version
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11 FATAL_ERROR)
 
+
 ### CMP0025   Compiler id for Apple Clang is now AppleClang.
 ### CMP0042   MACOSX_RPATH is enabled by default.
 
@@ -31,6 +32,7 @@ project(ALICEO2)
 ADD_CUSTOM_TARGET(man ALL)
 #In case you need Fortran
 #ENABLE_LANGUAGE(Fortran)
+set(CMAKE_VERBOSE_MAKEFILE TRUE)
 
 # Check for needed environment variables
 #IF not stop execution unless modular build is activated
