@@ -57,12 +57,11 @@ O2_GENERATE_EXECUTABLE(
 )
 
 O2_GENERATE_EXECUTABLE(
-  EXE_NAME "o2SyncReconstructionDummy"
-  SOURCES "src/o2SyncReconstructionDummy.cxx"
+  EXE_NAME "o2DataTypes"
+  SOURCES "src/o2DataTypes.cxx"
   MODULE_LIBRARY_NAME ${LIBRARY_NAME}
   BUCKET_NAME ${MODULE_BUCKET_NAME}
 )
-
 
 O2_GENERATE_EXECUTABLE(
   EXE_NAME "test_MakeDPLObjects"
