@@ -9,6 +9,7 @@
 // or submit itself to any jurisdiction.
 
 #include "Framework/runDataProcessing.h"
+#include <list>
 
 using namespace o2::framework;
 
