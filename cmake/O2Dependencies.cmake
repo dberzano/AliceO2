@@ -243,6 +243,7 @@ o2_define_bucket(
 o2_define_bucket(
     NAME
     O2FrameworkCore_bucket
+
     DEPENDENCIES
     O2DeviceApplication_bucket
     Core
@@ -250,10 +251,16 @@ o2_define_bucket(
     ${GUI_LIBRARIES}
     ${Monitoring_LIBRARIES}
     ${Configuration_LIBRARIES}
+    ${ARROW_SHARED_LIB}
+    ${LIBLZMA_LIBRARIES}
+    ${LZ4_LIBRARY}
 
     SYSTEMINCLUDE_DIRECTORIES
     ${Monitoring_INCLUDE_DIRS}
     ${Configuration_INCLUDE_DIRS}
+    ${ARROW_INCLUDE_DIR}
+    ${LIBLZMA_INCLUDE_DIRS}
+    ${LZ4_INCLUDE_DIR}
 )
 
 o2_define_bucket(

@@ -60,6 +60,8 @@ ELSE (NOT ALICEO2_MODULAR_BUILD)
 ENDIF (NOT ALICEO2_MODULAR_BUILD)
 
 find_package(Arrow)
+find_package(LibLZMA REQUIRED)
+find_package(LZ4 REQUIRED)
 
 # Load some basic macros which are needed later on
 include(O2Utils)
