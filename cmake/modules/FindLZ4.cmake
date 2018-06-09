@@ -5,6 +5,8 @@
 # LZ4_LIBRARIES, the libraries to link against to use LZ4
 # LZ4_FOUND.  If false, you cannot build anything that requires LZ4.
 
+include(FindPackageHandleStandardArgs)
+
 if(LZ4_CONFIG_EXECUTABLE)
   set(LZ4_FIND_QUIETLY 1)
 endif()
@@ -60,8 +62,9 @@ set(LZ4_LIBRARIES ${LZ4_LIBRARY})
 if(XXHASH_LIBRARY)
   list(APPEND LZ4_LIBRARIES ${XXHASH_LIBRARY})
 endif()
-if(NOT("${XXHASH_INCLUDE_DIR}" MATCHES ${LZ4_INCLUDE_DIR}))
+if("${XXHASH_INCLUDE_DIR}" AND NOT("${XXHASH_INCLUDE_DIR}" MATCHES ${LZ4_INCLUDE_DIR}))
   list(APPEND LZ4_INCLUDE_DIR ${XXHASH_INCLUDE_DIR})
 endif()
 
+find_package_handle_standard_args(LZ4 DEFAULT_MSG LZ4_LIBRARY LZ4_INCLUDE_DIR)
 mark_as_advanced(LZ4_FOUND LZ4_LIBRARY LZ4_INCLUDE_DIR XXHASH_INCLUDE_DIR)
