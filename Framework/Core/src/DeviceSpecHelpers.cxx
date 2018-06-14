@@ -63,6 +63,7 @@ std::string inputChannel2String(const InputChannelSpec& channel)
   result += "name=" + channel.name + ",";
   result += std::string("type=") + channelTypeFromEnum(channel.type) + ",";
   result += std::string("method=") + (channel.method == Bind ? "bind" : "connect") + ",";
+  result += std::string("rcvBufSize=") + std::to_string(DEFAULT_ZMQ_QUEUE_SIZE) + ",";
   result += std::string("address=") + (snprintf(buffer, 32, addressFormat, channel.port), buffer);
 
   return result;
@@ -77,6 +78,7 @@ std::string outputChannel2String(const OutputChannelSpec& channel)
   result += "name=" + channel.name + ",";
   result += std::string("type=") + channelTypeFromEnum(channel.type) + ",";
   result += std::string("method=") + (channel.method == Bind ? "bind" : "connect") + ",";
+  result += std::string("sndBufSize=") + std::to_string(DEFAULT_ZMQ_QUEUE_SIZE) + ",";
   result += std::string("address=") + (snprintf(buffer, 32, addressFormat, channel.port), buffer);
 
   return result;

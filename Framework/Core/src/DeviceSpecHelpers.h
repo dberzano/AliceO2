@@ -29,6 +29,8 @@
 #include <string>
 #include <map>
 
+constexpr int DEFAULT_ZMQ_QUEUE_SIZE = 6;  // 6 messages
+
 namespace o2
 {
 namespace framework

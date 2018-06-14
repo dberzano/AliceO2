@@ -7,6 +7,7 @@
 // In applying this license CERN does not waive the privileges and immunities
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
+#include "DeviceSpecHelpers.h"
 #include "Framework/DataRelayer.h"
 #include "Framework/DataSpecUtils.h"
 #include "Framework/DataProcessingHeader.h"
@@ -50,7 +51,7 @@ constexpr DataRelayer::TimesliceId INVALID_TIMESLICE_ID = {INVALID_TIMESLICE};
 
 // 16 is just some reasonable numer
 // The number should really be tuned at runtime for each processor.
-constexpr int DEFAULT_PIPELINE_LENGTH = 16;
+constexpr int DEFAULT_PIPELINE_LENGTH = DEFAULT_ZMQ_QUEUE_SIZE * 16 / 2;  // works for 16 devices top
 
 // FIXME: do we really need to pass the forwards?
 DataRelayer::DataRelayer(const CompletionPolicy& policy,
