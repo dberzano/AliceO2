@@ -60,6 +60,7 @@ ELSE (NOT ALICEO2_MODULAR_BUILD)
 ENDIF (NOT ALICEO2_MODULAR_BUILD)
 
 find_package(Arrow)
+find_package(parquet-cpp REQUIRED)
 find_package(LibLZMA REQUIRED)
 find_package(LZ4 REQUIRED)
 

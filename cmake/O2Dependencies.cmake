@@ -254,6 +254,7 @@ o2_define_bucket(
     ${ARROW_SHARED_LIB}
     ${LIBLZMA_LIBRARIES}
     ${LZ4_LIBRARY}
+    ${PARQUET-CPP_LIBRARIES}
 
     SYSTEMINCLUDE_DIRECTORIES
     ${Monitoring_INCLUDE_DIRS}
@@ -261,6 +262,7 @@ o2_define_bucket(
     ${ARROW_INCLUDE_DIR}
     ${LIBLZMA_INCLUDE_DIRS}
     ${LZ4_INCLUDE_DIR}
+    ${PARQUET-CPP_INCLUDE_DIR}
 )
 
 o2_define_bucket(
