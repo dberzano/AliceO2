@@ -84,7 +84,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
   // It seems there is no way (and that's deliberate) to generate a DataDescription on the fly, its
   // length is validated at compile time
   const std::vector<o2::header::DataDescription> dataDesc =
-    { "PQ1", "PQ2", "PQ3", "PQ4", "PQ5", "PQ6", "PQ7", "PQ8", "PQ9" };
+    { "PQ0", "PQ1", "PQ2", "PQ3", "PQ4", "PQ5", "PQ6", "PQ7", "PQ8", "PQ9" };
 
   // Define output specs for the data producer/reader: one channel per column per task
   auto outputSpecs = Outputs{};
@@ -96,12 +96,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
     }
   }
 
-  LOG(ERROR) << "Exiting on purpose" << FairLogger::endl;
-  assert(false);
-  // -------------------------------------------------------------------------------------------- //
-
   constexpr int numColumns = 2;
-
 
   // Data producer: we produce chunks of random data
   w.push_back({
@@ -121,6 +116,9 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
               sleep(sleepSec);
             }
             if (*askedToQuit) return;
+
+            LOG(info) << "Seems stupid but at the moment I am doing nothing" << FairLogger::endl;
+            return;
 
             // Apache Arrow test here. We produce random data and we write it using the Parquet
             // format. Interesting references:
@@ -208,65 +206,32 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
     }
   });
 
-  // Define printers here. They have the same boilerplate inside, so let's do it
-  // once.
-  std::map<std::string, Inputs> inputDefs = {
-    { "Printer1", { InputSpec{"pqd1", "TST", "PQ1"} } },
-    { "Printer2", { InputSpec{"pqd2", "TST", "PQ2"} } },
-    { "Printer3", { InputSpec{"pqd1", "TST", "PQ1"},
-                    InputSpec{"pqd2", "TST", "PQ2"} } }
-  };
+  // Add dummy tasks (we can improve)
+  numChannels = 0;
+  for (auto p : dynTasksCols) {
+    auto inputSpecs = Inputs{};
+    for (auto c : p.second) {
+      std::string x = "parquet" + std::to_string(numChannels);
+      inputSpecs.push_back( InputSpec{x, "TST", dataDesc[numChannels++]} );
+    }
 
-  // Printer: receives Parquet data, spits it out
-  w.push_back({
-    "Printer1",
-    { InputSpec{"pqd1", "TST", "PQ1"} },
-    {},
-    AlgorithmSpec{
-      AlgorithmSpec::InitCallback{
-        [](InitContext &setup) {
-          // ...init...
-          return [](ProcessingContext &ctx) {
-          };
+    // Here, we add the task
+    w.push_back({
+      p.first,  // task name as specified on the command line
+      inputSpecs,
+      {},
+      AlgorithmSpec{
+        AlgorithmSpec::InitCallback{
+          [](InitContext &setup) {
+            // ...init...
+            return [](ProcessingContext &ctx) {
+              LOG(info) << "This is a task doing nothing" << FairLogger::endl;
+            };
+          }
         }
       }
-    }
-  });
-
-  w.push_back({
-    "Printer2",
-    { InputSpec{"pqd2", "TST", "PQ2"} },
-    {},
-    AlgorithmSpec{
-      AlgorithmSpec::InitCallback{
-        [](InitContext &setup) {
-          // ...init...
-          return [](ProcessingContext &ctx) {
-            // ...processing...
-          };
-        }
-      }
-    }
-  });
-
-  w.push_back({
-    "Printer3",
-    {
-      InputSpec{"pqd1", "TST", "PQ1"},
-      InputSpec{"pqd2", "TST", "PQ2"}
-    },
-    {},
-    AlgorithmSpec{
-      AlgorithmSpec::InitCallback{
-        [](InitContext &setup) {
-          // ...init...
-          return [](ProcessingContext &ctx) {
-            // ...processing...
-          };
-        }
-      }
-    }
-  });
+    });
+  }
 
   return w;
 }
