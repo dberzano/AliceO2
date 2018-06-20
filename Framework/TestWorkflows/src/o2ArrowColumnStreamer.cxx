@@ -52,6 +52,13 @@ void customize(std::vector<ConfigParamSpec>& opt) {
   } \
 }
 
+o2::header::DataDescription getPqDataDesc(int idx) {
+  o2::header::DataDescription dd;
+  std::string s = "PQ" + std::to_string(idx);
+  dd.runtimeInit(s.c_str());
+  return dd;
+}
+
 WorkflowSpec defineDataProcessing(ConfigContext const &config) {
 
   WorkflowSpec w;
@@ -63,7 +70,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
   auto tasks = config.options().get<std::string>("tasks");
 
   auto dynColumnNames = std::make_shared<std::set<std::string>>();
-  std::map<std::string, std::set<std::string>> dynTasksCols;
+  auto dynTasksCols = std::make_shared<std::map<std::string, std::set<std::string>>>();
   int numChannels = 0;
 
   // Parse tasks definition and columns, store results in dyn* variables
@@ -78,21 +85,16 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
       dynColumnNames->insert(c);
       x.insert(c);
     }
-    dynTasksCols.insert(std::make_pair(*(tokDef.begin()), std::move(x)));
+    dynTasksCols->insert(std::make_pair(*(tokDef.begin()), std::move(x)));
   }
-
-  // It seems there is no way (and that's deliberate) to generate a DataDescription on the fly, its
-  // length is validated at compile time
-  const std::vector<o2::header::DataDescription> dataDesc =
-    { "PQ0", "PQ1", "PQ2", "PQ3", "PQ4", "PQ5", "PQ6", "PQ7", "PQ8", "PQ9" };
 
   // Define output specs for the data producer/reader: one channel per column per task
   auto outputSpecs = Outputs{};
-  for (auto p : dynTasksCols) {
+  for (auto p : *dynTasksCols) {
     LOG(info) << "Input data for " << p.first << ":" << FairLogger::endl;
     for (auto c : p.second) {
-      LOG(info) << "  " << c << FairLogger::endl;
-      outputSpecs.push_back( OutputSpec{"TST", dataDesc[numChannels++]} );
+      LOG(info) << "  " << c << " (#" << numChannels << ")" << FairLogger::endl;
+      outputSpecs.push_back( OutputSpec{"TST", getPqDataDesc(numChannels++)} );
     }
   }
 
@@ -103,14 +105,14 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
     outputSpecs,
     AlgorithmSpec{
       AlgorithmSpec::InitCallback{
-        [sleepSec, howMany, howManySmear, stopAtIterations, dataDesc,
-         dynColumnNames](InitContext &setup) {
+        [sleepSec, howMany, howManySmear, stopAtIterations,
+         dynColumnNames, dynTasksCols](InitContext &setup) {
 
           auto iterCount = std::make_shared<int>(0);
           auto askedToQuit = std::make_shared<bool>(false);
 
           return [iterCount, askedToQuit, sleepSec, howMany, howManySmear, stopAtIterations,
-                  dataDesc, dynColumnNames](ProcessingContext &ctx) {
+                  dynColumnNames, dynTasksCols](ProcessingContext &ctx) {
 
             if (sleepSec >= 0) {
               sleep(sleepSec);
@@ -165,9 +167,9 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
               auto stream = std::make_shared<arrow::io::BufferOutputStream>(buffer);
 
               // We now write; first we make sure the stream works as expected
-              long long pos = 12345;
-              ARROW_DPL_HANDLE(stream->Tell(&pos));
-              assert(pos == 0);
+              long long bytesWritten = 12345;
+              ARROW_DPL_HANDLE(stream->Tell(&bytesWritten));
+              assert(bytesWritten == 0);
 
               // Write table in Parquet format
               ARROW_DPL_HANDLE(parquet::arrow::WriteTable(*table,
@@ -176,10 +178,36 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
                                                           10000));
 
               // Check how many bytes were written and the buffer size
-              ARROW_DPL_HANDLE(stream->Tell(&pos));
-              LOG(info) << "Written " << pos << " bytes (Parquet) for " << c
+              ARROW_DPL_HANDLE(stream->Tell(&bytesWritten));
+              LOG(info) << "Written " << bytesWritten << " bytes (Parquet) for " << c
                         << ", buffer is " << buffer->size() << " bytes" << FairLogger::endl;
 
+              // We have to decide where to stream this column now
+              // TODO: this lookup is horrible and should be done elsewhere once for all, use a LUT
+              int colIdx = 0;
+              for (auto p : *dynTasksCols) {
+                auto thisIt = p.second.find(c);
+                if (thisIt != p.second.end()) {
+                  int thisIdx = std::distance(p.second.begin(), thisIt) + colIdx;
+                  LOG(info) << "Column " << c << " is needed by task " << p.first
+                            << " with index " << thisIdx
+                            << FairLogger::endl;
+
+                  // Snapshot data for the DPL. We need allocation magic. TODO: this is less than
+                  // optimal, from a memory perspective
+                  // TODO: verify whether it makes sense to copy only bytesWritten, maybe the buffer
+                  // size is what we want, due to the fact that Parquet writes meta information at
+                  // the end of the stream (or the buffer?)
+                  auto alloc = boost::container::pmr::new_delete_resource();
+                  uint8_t *rawDplBuf = static_cast<uint8_t*>(alloc->allocate(bytesWritten, alignof(std::max_align_t)));
+                  std::copy(buffer->data(), buffer->data()+bytesWritten, rawDplBuf);
+                  ctx.outputs().adoptChunk(Output{"TST", getPqDataDesc(thisIdx)},
+                                           reinterpret_cast<char *>(rawDplBuf), bytesWritten,
+                                           o2::header::Stack::getFreefn(), alloc);
+
+                }
+                colIdx += p.second.size();
+              }
             }
 
             (*iterCount)++;
@@ -200,15 +228,15 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
 
   w.push_back(std::move(srcProducer));
 
-  constexpr int numColumns = 2;
-
   // Add dummy tasks (TODO: we can improve and use external functions)
   numChannels = 0;
-  for (auto p : dynTasksCols) {
+  for (auto p : *dynTasksCols) {
     auto inputSpecs = Inputs{};
     for (auto c : p.second) {
+      LOG(info) << "Adding to task " << p.first << " channel #" << numChannels << FairLogger::endl;
       std::string x = "parquet" + std::to_string(numChannels);
-      inputSpecs.push_back( InputSpec{x, "TST", dataDesc[numChannels++]} );
+      inputSpecs.push_back( InputSpec{x, "TST", getPqDataDesc(numChannels)} );
+      numChannels++;
     }
 
     // Here, we add the task
