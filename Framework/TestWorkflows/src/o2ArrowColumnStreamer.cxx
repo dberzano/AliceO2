@@ -62,7 +62,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
   auto stopAtIterations = config.options().get<int>("stop-at-iter");
   auto tasks = config.options().get<std::string>("tasks");
 
-  std::set<std::string> dynColumnNames;
+  auto dynColumnNames = std::make_shared<std::set<std::string>>();
   std::map<std::string, std::set<std::string>> dynTasksCols;
   int numChannels = 0;
 
@@ -75,7 +75,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
     boost::tokenizer<boost::char_separator<char>> tokCols{ *(++tokDefIt), boost::char_separator<char>{"+"} };
     std::set<std::string> x;
     for (auto c : tokCols) {
-      dynColumnNames.insert(c);
+      dynColumnNames->insert(c);
       x.insert(c);
     }
     dynTasksCols.insert(std::make_pair(*(tokDef.begin()), std::move(x)));
@@ -96,29 +96,28 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
     }
   }
 
-  constexpr int numColumns = 2;
-
-  // Data producer: we produce chunks of random data
-  w.push_back({
+  // Define the producer device
+  auto srcProducer = DataProcessorSpec{
     "ParquetProd",
     Inputs{},
     outputSpecs,
     AlgorithmSpec{
       AlgorithmSpec::InitCallback{
-        [sleepSec, howMany, howManySmear, stopAtIterations, dataDesc](InitContext &setup) {
+        [sleepSec, howMany, howManySmear, stopAtIterations, dataDesc,
+         dynColumnNames](InitContext &setup) {
 
           auto iterCount = std::make_shared<int>(0);
           auto askedToQuit = std::make_shared<bool>(false);
 
-          return [iterCount, askedToQuit, sleepSec, howMany, howManySmear, stopAtIterations, dataDesc](ProcessingContext &ctx) {
+          return [iterCount, askedToQuit, sleepSec, howMany, howManySmear, stopAtIterations,
+                  dataDesc, dynColumnNames](ProcessingContext &ctx) {
 
             if (sleepSec >= 0) {
               sleep(sleepSec);
             }
             if (*askedToQuit) return;
 
-            LOG(info) << "Seems stupid but at the moment I am doing nothing" << FairLogger::endl;
-            return;
+            // Start of Parquet data producer
 
             // Apache Arrow test here. We produce random data and we write it using the Parquet
             // format. Interesting references:
@@ -130,67 +129,57 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
             // Arrow) data is stored. DPL will dispose of it when appropriate. One downside is that
             // the Parquet TableWriter does not handle buffer overruns at the moment, and
             // this is quite dangerous.
-            // TODO: Stream columns independently, as different DPL channels, reassemble it in local
-            // tables according to the subscribers.
 
+            // Determine how much data to produce dynamically
             int howManyNow = howMany + (rand() % (2 * howManySmear) - howManySmear);
 
-            // Column 1
-            arrow::Int32Builder builderCol1;
-            for (int i=0; i<howManyNow; i++) {
-              ARROW_DPL_HANDLE(builderCol1.Append( rand() % 1000 ));
-            }
-            std::shared_ptr<arrow::Array> col1;
-            ARROW_DPL_HANDLE(builderCol1.Finish(&col1));
+            // Now produce random data. For simplicity, we only have int32 as a type
+            std::vector<std::shared_ptr<arrow::Int32Builder>> arrowBuilders;
+            std::vector<std::shared_ptr<arrow::Array>> arrowArrays;
+            std::vector<std::shared_ptr<arrow::Table>> arrowTables;
+            for (auto c : *dynColumnNames) {
+              LOG(info) << "Producing " << howManyNow << " entries for " << c << FairLogger::endl;
+              auto builder = std::make_shared<arrow::Int32Builder>();
+              for (int i=0; i<howManyNow; i++) {
+                ARROW_DPL_HANDLE(builder->Append(rand() % 1000 + i * 1000));
+              }
+              std::shared_ptr<arrow::Array> array;
+              ARROW_DPL_HANDLE(builder->Finish(&array));
+              arrowBuilders.push_back(builder);  // XXX
+              arrowArrays.push_back(array);  // XXX
 
-            // Column 2
-            arrow::Int32Builder builderCol2;
-            for (int i=0; i<howManyNow; i++) {
-              ARROW_DPL_HANDLE(builderCol2.Append( rand() % 1000 + 1000 ));
-            }
-            std::shared_ptr<arrow::Array> col2;
-            ARROW_DPL_HANDLE(builderCol2.Finish(&col2));
-
-            // Out of convenience we keep our Array columns in a vector
-            std::vector<std::shared_ptr<arrow::Array>> columns = { col1, col2 };
-
-            // For each Array we create a buffer that the DPL will adopt
-            auto alloc = boost::container::pmr::new_delete_resource();
-            size_t outputBufSize = sizeof(int32_t) * (howManyNow+10);
-            int count = 0;
-            for (auto c : columns) {
-              LOG(INFO) << "Creating buffer of " << outputBufSize << " bytes for "
-                        << howManyNow << " rows" << FairLogger::endl;
-              uint8_t *rawOutputBuf = static_cast<uint8_t*>(alloc->allocate(outputBufSize, alignof(std::max_align_t)));
-              auto arrowOutputBuf = std::make_shared<arrow::MutableBuffer>(&rawOutputBuf[8], outputBufSize-8);
-              auto arrowOutputStream = std::make_shared<arrow::io::FixedSizeBufferWriter>(arrowOutputBuf);
-
-              // We create one-column-wide tables; Parquet seems to like Tables, not Arrays
-              std::vector<std::shared_ptr<arrow::Field>> schema_vector = {
-                  arrow::field("colTODO_NAME", arrow::int32())
+              // For each Array, we create a one-column-wide table for Parquet (TODO: maybe there is
+              // a better way that does not imply reverse-engineering the Arrow memory format?!)
+              auto schema_vec = std::vector<std::shared_ptr<arrow::Field>>{
+                arrow::field(c, arrow::int32())  // proper column name and type
               };
-              auto schema = std::make_shared<arrow::Schema>(schema_vector);
-              std::shared_ptr<arrow::Table> table = arrow::Table::Make(schema, { columns[count] });
+              auto schema = std::make_shared<arrow::Schema>(schema_vec);
+              auto table = arrow::Table::Make(schema, {array});  // a single column
+              arrowTables.push_back(table);  // XXX
 
-              long long pos;
-              ARROW_DPL_HANDLE(arrowOutputStream->Tell(&pos));
+              // We need to write our data someplace. We create a PoolBuffer, memory is managed by
+              // Arrow itself
+              // Note: use MutableBuffer for memory managed by us as buffer, and use
+              // FixedSizeBufferWriter as stream. No boundary check would occur in that case!
+              auto buffer = std::make_shared<arrow::PoolBuffer>(arrow::default_memory_pool());
+              auto stream = std::make_shared<arrow::io::BufferOutputStream>(buffer);
+
+              // We now write; first we make sure the stream works as expected
+              long long pos = 12345;
+              ARROW_DPL_HANDLE(stream->Tell(&pos));
               assert(pos == 0);
+
+              // Write table in Parquet format
               ARROW_DPL_HANDLE(parquet::arrow::WriteTable(*table,
                                                           arrow::default_memory_pool(),
-                                                          arrowOutputStream,
+                                                          stream,
                                                           10000));
-              ARROW_DPL_HANDLE(arrowOutputStream->Tell(&pos));
 
-              // Write size (used in deserializing as DPL does not allow for input truncation ATM)
-              memcpy(rawOutputBuf, &pos, 8);
+              // Check how many bytes were written and the buffer size
+              ARROW_DPL_HANDLE(stream->Tell(&pos));
+              LOG(info) << "Written " << pos << " bytes (Parquet) for " << c
+                        << ", buffer is " << buffer->size() << " bytes" << FairLogger::endl;
 
-              // DPL adopts our memory and will dispose of it properly
-              ctx.outputs().adoptChunk(Output{"TST", dataDesc[count]},
-                                       reinterpret_cast<char *>(rawOutputBuf), outputBufSize,
-                                       o2::header::Stack::getFreefn(), alloc);
-
-              LOG(INFO) << "Written " << pos << " bytes in Parquet format" << FairLogger::endl;
-              count++;
             }
 
             (*iterCount)++;
@@ -200,13 +189,20 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
               *askedToQuit = true;
               ctx.services().get<ControlService>().readyToQuit(true);
             }
+
+            // End of Parquet data producer
+
           };
         }
       }
     }
-  });
+  };
 
-  // Add dummy tasks (we can improve)
+  w.push_back(std::move(srcProducer));
+
+  constexpr int numColumns = 2;
+
+  // Add dummy tasks (TODO: we can improve and use external functions)
   numChannels = 0;
   for (auto p : dynTasksCols) {
     auto inputSpecs = Inputs{};
