@@ -36,7 +36,7 @@ void customize(std::vector<ConfigParamSpec>& opt) {
                   {"Maximum divergency over the ints generated"} });
   opt.push_back({ "stop-at-iter", VariantType::Int, -1,
                   {"Stop at iterations (-1 == don't stop)"} });
-  opt.push_back({ "tasks", VariantType::String, "Task1=col1+col2,Task2=col1,Task3=col2",
+  opt.push_back({ "tasks", VariantType::String, "Task1=col1+col2,Task2=col1,Task3=col2,Task4=col1+col2+col3+col4",
                   {"Tasks to execute"} });
 }
 
@@ -47,7 +47,7 @@ void customize(std::vector<ConfigParamSpec>& opt) {
 #define ARROW_DPL_HANDLE(x) { \
   arrow::Status _x = (x); \
   if (!_x.ok()) { \
-    LOG(ERROR) << "Arrow runtime problem: " << _x.ToString() << FairLogger::endl; \
+    LOG(error) << "Arrow runtime problem: " << _x.ToString() << FairLogger::endl; \
     assert(false); \
   } \
 }
@@ -57,6 +57,24 @@ o2::header::DataDescription getPqDataDesc(int idx) {
   std::string s = "PQ" + std::to_string(idx);
   dd.runtimeInit(s.c_str());
   return dd;
+}
+
+template <typename T>
+std::stringstream catAry(const T &iterable) {
+  std::stringstream buf;
+  for (auto i : iterable) {
+    if (buf.tellp()) buf << ", ";
+    buf << i;
+  }
+  return buf;
+}
+
+std::stringstream catLabels(ProcessingContext &ctx) {
+  std::list<const char *> labels;
+  for (auto i : ctx.inputs()) {
+    labels.push_back((i.spec)->binding.c_str());
+  }
+  return catAry(labels);
 }
 
 WorkflowSpec defineDataProcessing(ConfigContext const &config) {
@@ -136,19 +154,16 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
             int howManyNow = howMany + (rand() % (2 * howManySmear) - howManySmear);
 
             // Now produce random data. For simplicity, we only have int32 as a type
-            std::vector<std::shared_ptr<arrow::Int32Builder>> arrowBuilders;
-            std::vector<std::shared_ptr<arrow::Array>> arrowArrays;
-            std::vector<std::shared_ptr<arrow::Table>> arrowTables;
+            int numCol = 0;
             for (auto c : *dynColumnNames) {
               LOG(info) << "Producing " << howManyNow << " entries for " << c << FairLogger::endl;
               auto builder = std::make_shared<arrow::Int32Builder>();
               for (int i=0; i<howManyNow; i++) {
-                ARROW_DPL_HANDLE(builder->Append(rand() % 1000 + i * 1000));
+                ARROW_DPL_HANDLE(builder->Append(rand() % 1000 + numCol * 1000));
               }
+              numCol++;
               std::shared_ptr<arrow::Array> array;
               ARROW_DPL_HANDLE(builder->Finish(&array));
-              arrowBuilders.push_back(builder);  // XXX
-              arrowArrays.push_back(array);  // XXX
 
               // For each Array, we create a one-column-wide table for Parquet (TODO: maybe there is
               // a better way that does not imply reverse-engineering the Arrow memory format?!)
@@ -157,7 +172,6 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
               };
               auto schema = std::make_shared<arrow::Schema>(schema_vec);
               auto table = arrow::Table::Make(schema, {array});  // a single column
-              arrowTables.push_back(table);  // XXX
 
               // We need to write our data someplace. We create a PoolBuffer, memory is managed by
               // Arrow itself
@@ -212,7 +226,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
 
             (*iterCount)++;
             if (stopAtIterations > 0 && *iterCount >= stopAtIterations) {
-              LOG(WARN) << "Producer has reached " << (*iterCount)
+              LOG(warn) << "Producer has reached " << (*iterCount)
                         << " iterations: stopping" << FairLogger::endl;
               *askedToQuit = true;
               ctx.services().get<ControlService>().readyToQuit(true);
@@ -233,9 +247,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
   for (auto p : *dynTasksCols) {
     auto inputSpecs = Inputs{};
     for (auto c : p.second) {
-      LOG(info) << "Adding to task " << p.first << " channel #" << numChannels << FairLogger::endl;
-      std::string x = "parquet" + std::to_string(numChannels);
-      inputSpecs.push_back( InputSpec{x, "TST", getPqDataDesc(numChannels)} );
+      inputSpecs.push_back( InputSpec{c, "TST", getPqDataDesc(numChannels)} );
       numChannels++;
     }
 
@@ -249,7 +261,69 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
           [](InitContext &setup) {
             // ...init...
             return [](ProcessingContext &ctx) {
-              LOG(info) << "This is a task doing nothing" << FairLogger::endl;
+
+              LOG(info) << "I have columns " << catLabels(ctx).str() << FairLogger::endl;
+
+              // Empty table
+              //auto schema = std::make_shared<arrow::Schema>(std::vector<std::shared_ptr<arrow::Field>>{});
+              //auto table = arrow::Table::Make(schema, std::vector<std::shared_ptr<arrow::Array>>{});
+              std::shared_ptr<arrow::Table> table;  // lazily inited
+
+              // Have to assemble several inputs into a Table. Single input channels are Tables
+              // themselves.
+              for (auto input : ctx.inputs()) {
+                LOG(info) << "Getting column " << (input.spec)->binding << FairLogger::endl;
+                auto rawDplBuf = DataRefUtils::as<uint8_t>(input);  // gsl::span --> data(), size()
+
+                // Parquet + Arrow boilerplate for reading
+                std::unique_ptr<parquet::arrow::FileReader> reader;
+                auto buffer = std::make_shared<arrow::MutableBuffer>(rawDplBuf.data(), rawDplBuf.size());
+                auto stream = std::make_shared<arrow::io::BufferReader>(buffer);
+                ARROW_DPL_HANDLE(parquet::arrow::OpenFile(stream,
+                                                          arrow::default_memory_pool(),
+                                                          &reader));
+                std::shared_ptr<arrow::Table> tmpTable;
+                ARROW_DPL_HANDLE(reader->ReadTable(&tmpTable));
+
+                // Add the only column to the existing joined table
+                if (table.get() == nullptr) {
+                  table = tmpTable;
+                }
+                else {
+                  // AddColumn check if the number of rows match
+                  ARROW_DPL_HANDLE(table->AddColumn(table->num_columns(), tmpTable->column(0), &table));
+                }
+              }
+
+              auto printStats = [&table]() {
+                // Now print stats of the produced table
+                assert(table.get() != nullptr);
+                std::stringstream buf;
+                auto schema = table->schema();
+                for (int i=0; i<schema->num_fields(); i++) {
+                  if (buf.tellp()) buf << ", ";
+                  buf << schema->field(i)->name();
+                }
+                LOG(info) << "Loaded rows: " << table->num_rows()
+                          << ", columns: " << table->num_columns()
+                          << " (" << buf.str() << ")" << FairLogger::endl;
+
+                // Print an excerpt of the actual data
+                for (int i=0; i<table->num_columns(); i++) {
+                  auto column = table->column(i);
+                  auto array = std::static_pointer_cast<arrow::Int32Array>(column->data()->chunk(0));
+                  buf.str(std::string());
+                  buf.clear();
+                  for (int j=0; j<table->num_rows() && j<5; j++) {
+                    if (buf.tellp()) buf << ", ";
+                    buf << std::to_string(array->Value(j));
+                  }
+                  LOG(info) << "Excerpt of Column " << schema->field(i)->name()
+                            << ": " << buf.str() << FairLogger::endl;
+                }
+              };
+              printStats();
+
             };
           }
         }
