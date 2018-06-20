@@ -248,6 +248,7 @@ o2_define_bucket(
     O2DeviceApplication_bucket
     Core
     Net
+    TreePlayer
     ${GUI_LIBRARIES}
     ${Monitoring_LIBRARIES}
     ${Configuration_LIBRARIES}

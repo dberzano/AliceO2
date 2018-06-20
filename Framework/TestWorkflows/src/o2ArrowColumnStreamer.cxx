@@ -23,8 +23,11 @@
 #include <parquet/arrow/writer.h>
 #include <parquet/arrow/reader.h>
 #include <boost/tokenizer.hpp>
+#include <ROOT/TDataFrame.hxx>
+#include <ROOT/TArrowDS.hxx>
 
 using namespace o2::framework;
+using namespace ROOT::Experimental;
 
 // This has to be declared before including runDataProcessing.h
 void customize(std::vector<ConfigParamSpec>& opt) {
@@ -259,7 +262,11 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
       AlgorithmSpec{
         AlgorithmSpec::InitCallback{
           [](InitContext &setup) {
-            // ...init...
+            
+            // Initialization: just enable ImplicitMT
+            constexpr int numThreads = 3;
+            ROOT::EnableImplicitMT(numThreads);
+
             return [](ProcessingContext &ctx) {
 
               LOG(info) << "I have columns " << catLabels(ctx).str() << FairLogger::endl;
@@ -271,8 +278,10 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
 
               // Have to assemble several inputs into a Table. Single input channels are Tables
               // themselves.
+              std::vector<std::string> columnNames;
               for (auto input : ctx.inputs()) {
                 LOG(info) << "Getting column " << (input.spec)->binding << FairLogger::endl;
+                columnNames.push_back((input.spec)->binding);
                 auto rawDplBuf = DataRefUtils::as<uint8_t>(input);  // gsl::span --> data(), size()
 
                 // Parquet + Arrow boilerplate for reading
@@ -322,7 +331,26 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
                             << ": " << buf.str() << FairLogger::endl;
                 }
               };
-              printStats();
+              //printStats();
+
+              auto runDataFrame = [&table, &columnNames]() {
+                // This is the actual "analysis timeframe loop", seeing only data it subscribed to
+                TDataFrame tdf = TDF::MakeArrowDataFrame(table, columnNames);
+                // TODO we work on the first column only (until we find a good way to process
+                // multiple columns)
+                std::array<double,numThreads> partialSums{};
+                tdf.ForeachSlot([&partialSums](int slot, int32_t n) {
+                  partialSums[slot] += n;
+                }, {columnNames[0]});
+                double sum = 0.;
+                for (auto p : partialSums) {
+                  sum += p;
+                }
+                double avg = sum / (double)table->num_rows();
+                LOG(info) << "Average of Column " << columnNames[0]
+                         << " using TDF: " << avg << FairLogger::endl;
+              };
+              runDataFrame();
 
             };
           }
