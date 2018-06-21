@@ -139,7 +139,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
             auto arrowOutputStream = std::make_shared<arrow::io::FixedSizeBufferWriter>(arrowOutputBuf);
 
             // The output file format is Parquet. Parquet needs a buffer to write data to
-            long long pos;
+            int64_t pos;
             ARROW_DPL_HANDLE(arrowOutputStream->Tell(&pos));
             assert(pos == 0);
             ARROW_DPL_HANDLE(parquet::arrow::WriteTable(*table,
@@ -188,7 +188,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
 
             // The first 8 bytes are reserved to store the actual stream portion used. This is
             // essential for Parquet as it looks at the end of the stream first
-            auto actualSize = DataRefUtils::as<long long>(inp)[0];
+            auto actualSize = DataRefUtils::as<int64_t>(inp)[0];
 
             // Deserialize Parquet data to Arrow.
             // See https://github.com/apache/parquet-cpp/blob/master/examples/parquet-arrow/src/reader-writer.cc

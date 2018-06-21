@@ -184,7 +184,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
               auto stream = std::make_shared<arrow::io::BufferOutputStream>(buffer);
 
               // We now write; first we make sure the stream works as expected
-              long long bytesWritten = 12345;
+              int64_t bytesWritten = 12345;
               ARROW_DPL_HANDLE(stream->Tell(&bytesWritten));
               assert(bytesWritten == 0);
 
@@ -262,7 +262,7 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
       AlgorithmSpec{
         AlgorithmSpec::InitCallback{
           [](InitContext &setup) {
-            
+
             // Initialization: just enable ImplicitMT
             constexpr int numThreads = 3;
             ROOT::EnableImplicitMT(numThreads);
@@ -343,8 +343,8 @@ WorkflowSpec defineDataProcessing(ConfigContext const &config) {
                   partialSums[slot] += n;
                 }, {columnNames[0]});
                 double sum = 0.;
-                for (auto p : partialSums) {
-                  sum += p;
+                for (auto ps : partialSums) {
+                  sum += ps;
                 }
                 double avg = sum / (double)table->num_rows();
                 LOG(info) << "Average of Column " << columnNames[0]
